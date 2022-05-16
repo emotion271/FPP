@@ -2,7 +2,7 @@ import logging
 import warnings
 
 import numpy as np
-from visdom import Visdom
+# from visdom import Visdom
 from utils.meter import MeterFactory
 
 LOGGER = logging.getLogger(__name__)
@@ -121,7 +121,7 @@ class GroupPlotTracer(GroupTracer):
 
     def __init__(self, env="main", **group_win_size):
         super().__init__(**group_win_size)
-        self.vis = Visdom(env=env, port=8098)
+        self.vis = Visdom(env=env)
         self._figure_cfg = dict()
         self._registered_figures = dict()
         self._registered_lines = dict()

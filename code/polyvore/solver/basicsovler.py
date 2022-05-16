@@ -64,8 +64,10 @@ class BasicSolver(object):
 
     def init_plot(self, env, title):
         """Initialize plots for accuracy and loss."""
-        self.tracer = utils.tracer.GroupPlotTracer(env, train=50, test=1)
-        self.net.register_figure(self.tracer, title)
+        # self.tracer = utils.tracer.GroupPlotTracer(env, train=50, test=1)
+        # self.net.register_figure(self.tracer, title)
+        """Without plots."""
+        self.tracer = utils.tracer.GroupTracer(train=50, test=1)
         self.tracer.logging()
 
     def gather_loss(self, losses, backward=False):
@@ -172,17 +174,19 @@ class BasicSolver(object):
             results.update(loss)
             results.update(accuracy)
             # update history and plotting
+
             self.tracer.update_history(group=phase, x=self.iter, data=results)
             if self.iter % self.param.display == 0:
                 LOGGER.info(msg, self.iter, idx)
-                self.tracer.update_trace(group=phase, x=self.iter, keys=results.keys())
+                # self.tracer.update_trace(group=phase, x=self.iter, keys=results.keys())
                 self.tracer.logging(phase)
                 self.net.debug()
             self.iter += 1
             latest_time = time()
         LOGGER.info(msg, self.iter, loader.num_batch - 1)
         self.tracer.logging(phase)
-        self.tracer.update_trace(group=phase, x=self.iter, keys=results.keys())
+        # self.tracer.update_trace(group=phase, x=self.iter, keys=results.keys())
+
 
     def testOneEpoch(self, epoch=None):
         """Run test epoch.
@@ -247,7 +251,7 @@ class BasicSolver(object):
         # self.init_schedular(param)
         self.optimizer.load_state_dict(state_dict["optim"])
         self.lr_scheduler.__dict__.update(state_dict["scheduler"])
-        self.tracer.load_state_dict(state_dict["tracer"])
+        # self.tracer.load_state_dict(state_dict["tracer"])
 
     # TODO:
     # []: save the history in a separated file
@@ -263,7 +267,7 @@ class BasicSolver(object):
         state_dict = {
             "net": self.net.state_dict(),
             "optim": self.optimizer.state_dict(),
-            "tracer": self.tracer.state_dict(),
+            # "tracer": self.tracer.state_dict(),
             "state": dict(
                 best_loss=self.best_loss,
                 best_acc=self.best_acc,
@@ -280,9 +284,9 @@ class BasicSolver(object):
         solver_path = self.format_filepath(label, "solver")
         LOGGER.info("Save solver state to %s", solver_path)
         torch.save(state_dict, solver_path)
-        tracer_path = self.format_filepath(label, "tracer")
-        LOGGER.info("Save tracer state to %s", tracer_path)
-        torch.save(state_dict["tracer"], tracer_path)
+        # tracer_path = self.format_filepath(label, "tracer")
+        # LOGGER.info("Save tracer state to %s", tracer_path)
+        # torch.save(state_dict["tracer"], tracer_path)
 
     def save_net(self, label):
         """Save the net's state."""

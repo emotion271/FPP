@@ -6,7 +6,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-import random
 
 import polyvore.config as cfg
 import polyvore.param
@@ -91,14 +90,10 @@ class FashionNet(nn.Module):
         super().__init__()
         self.param = param
         self.scale = 1.0
-        self.S = nn.Parameter(torch.Tensor(1, 5, param.dim))
-        nn.init.xavier_uniform_(self.S)
         # user embedding layer
-        #self.user_eb = M.UserEb(param)
         self.user_embedding = M.UserEncoder(param)
-        self.disen_user_outfit = M.UserOutfitDisen(param, self.S)
-        # self.disen_user = M.UserDisen(param, self.S)
-        # self.disen_outfit = M.OutfitDisen(param, self.S)
+        self.disen_user = M.UserDisen(param)
+        self.disen_outfit = M.OutfitDisen(param)
         # feature extractor
         if self.param.use_visual:
             self.features = NAMED_MODELS[param.backbone](tailed=True)
@@ -110,14 +105,13 @@ class FashionNet(nn.Module):
             self.encoder_v = nn.ModuleList(
                 [M.ImgEncoder(feat_dim, param) for _ in range(num_encoder)]
             )
-            #self.atten_v = M.ItemAttention(param)
         if self.param.use_semantic:
             feat_dim = 2400
             self.encoder_t = nn.ModuleList(
                 [M.TxtEncoder(feat_dim, param) for _ in range(num_encoder)]
             )
-            #self.atten_t = M.ItemAttention(param)
         # matching block
+
         if self.param.hash_types == polyvore.param.NO_WEIGHTED_HASH:
             # use learnable scale
             self.core = M.LearnableScale(1)
@@ -127,7 +121,8 @@ class FashionNet(nn.Module):
         else:
             # single weighted hashing for user-item or item-item
             self.core = M.CoreMat(param.dim)
-        self.match = M.Match(param)
+
+        #self.match = M.Match(param)
         if self.param.use_semantic and self.param.use_visual:
             self.loss_weight = dict(rank_loss=1.0, binary_loss=None, vse_loss=0.1)
         else:
@@ -160,6 +155,7 @@ class FashionNet(nn.Module):
         user = self.user_embedding(one_hot)
         return self.sign(user).cpu().numpy()
 
+    '''
     def get_matching_weight(self):
         if self.param.hash_types == polyvore.param.WEIGHTED_HASH_BOTH:
             weights_u = self.core[0].weight.data.cpu().numpy()
@@ -178,6 +174,7 @@ class FashionNet(nn.Module):
             weights_i = []
             w = self.core.weight.data.cpu().numpy()
         return weights_i, weights_u, w
+    '''
 
     def register_figure(self, tracer, title):
         for key, trace_dict in self.tracer.items():
@@ -232,59 +229,66 @@ class FashionNet(nn.Module):
             for encoder in self.encoder_t:
                 encoder.set_scale(value)
 
-    def scores(self, ulatent, ilatents, his, scale=10.0):
+    def scores(self, ulatent, ilatents, ifeat, his_v, scale=10.0):
         """For simplicity, we remove top-top pair on variable-length outfit and
            use duplicated top when necessary.
         """
-        size = 5
+        '''
+        size = ilatents.size(1)
+        # print(size)
         indx, indy = np.triu_indices(size, k=1)
+
         if size == 4:
             # remove top-top comparison
             indx = indx[1:]
             indy = indy[1:]
-        # N x size x D
-        #latents = torch.stack(ilatents, dim=1)
-        #print('latents:', latents.size())
-        #latents, i_norm = self.disen_graph(latents)
-        #print('graph_latent:', latents)
-        latents = ilatents
-        #ulatent = ulatent.unsqueeze(1).expand(-1, size, -1)
-        #print('u_latent', ulatent.size())
+        '''
         # # N x size x D
-        x = latents * ulatent
-        x_his = his * ulatent
+        # x = self.match(ilatents, ulatent, his_v)
+        x = ilatents * ulatent
+        x_his = ilatents * his_v
         # N x Comb x D
-        y = latents[:, indx] * latents[:, indy]
+        # y = ifeat[:, indx] * ifeat[:, indy]
         # shape [N]
+        #score_mlp = self.match(latents, ulatent)
+        #y = ifeat[:, indx] * ifeat[:, indy]
+        #score_i = y.mean(dim=(1, 2))
+        #print(score_mlp.size())
+        #print(score_i.size())
+        #score = score_i + score_mlp
+
         if self.param.hash_types == polyvore.param.WEIGHTED_HASH_BOTH:
-            x = self.core[0](x)
-            x_his = self.core[0](x_his)
-            score_u = self.match(x, x_his).mean(dim=(1, 2))
-            score_i = self.core[1](y).mean(dim=(1, 2))
+            #score_mlp = self.match(ilatents, ulatent)
+            score_u = self.core[0](x).mean(dim=(1, 2))
+            score_his = self.core[0](x_his).mean(dim=(1, 2))
+            score_i = self.core[1](ifeat).mean(dim=(1, 2, 3))
         elif self.param.hash_types == polyvore.param.WEIGHTED_HASH_U:
-            #score_u = self.core(x).mean(dim=1)
+            #score_u = self.core(x).mean(dim=(1, 2))
             #score_i = y.mean(dim=(1, 2))
             #x = self.core(x)
-            score_u = self.match(x).mean(dim=(1, 2))
+            score_u = self.match(x).mean(dim=(1,2))
         elif self.param.hash_types == polyvore.param.WEIGHTED_HASH_I:
             score_u = x.mean(dim=(1, 2))
             score_i = self.core(x).mean(dim=(1, 2))
         elif self.param.hash_types == polyvore.param.NO_WEIGHTED_HASH:
-            score_u = self.core(x.mean(dim=(1, 2)))
+            score_u = self.core(x).mean(dim=(1, 2))
             score_i = y.mean(dim=(1, 2))
         else:
             score_u = x.mean(dim=(1, 2))
             score_i = y.mean(dim=(1, 2))
+        
         # scale score to [-2 * scale, 2 * scale]
         if self.param.zero_iterm:
             score = score_u * (scale * 2.0)
         elif self.param.zero_uterm:
             score = score_i * (scale * 2.0)
         else:
-            score = (score_u + score_i) * scale
-            # score = score_u*scale
+            score = (score_u + score_i + score_his) * scale
+            #score = score_u*scale
+
         # shape N x 1
-        return score.view(-1, 1)
+        #print(score_mlp)
+        return score.view(-1, 1), ilatents
 
     def sign(self, x):
         """Return hash code of x.
@@ -316,40 +320,13 @@ class FashionNet(nn.Module):
         lcpi_s = torch.stack(lcpi, dim=1)
         lcni_s = torch.stack(lcni, dim=1)
 
-        '''
-        lcus_k = self.disen_user(lcus)
-        lcpi_k = self.disen_outfit(lcpi_s)
-        lcni_k = self.disen_outfit(lcni_s)
-        his_vk = [self.disen_outfit(out_v) for out_v in his_v]
-        his_k = torch.stack(his_vk, dim=1)
-        his = torch.mean(his_k, dim=1)
-        '''
+        his_f = torch.stack(his_v, dim=1)
+        his_f = torch.mean(his_f, dim=1)
+        lcpi_f, feat_comp, dloss_o = self.disen_outfit(lcpi_s)
+        lcni_f, feat_comn, _ = self.disen_outfit(lcni_s)
 
-        lcus_k, lcpi_k, neg_k, his = self.disen_user_outfit(lcus, lcpi_s, lcni_s, his_v)
-
-        '''
-        batch_size = lcus_k.size()[0]
-
-        NEG = 5
-        for i in range(NEG):
-            rand = int((random.random() + i) * batch_size / NEG)
-            neg_k = torch.cat([neg_k, torch.narrow(lcpi_k, 0, rand, batch_size-rand),
-                             torch.narrow(lcpi_k, 0, 0, rand)], 0)
-
-        pos_k = torch.repeat_interleave(lcpi_k, NEG+1, 0)
-        user_k = torch.repeat_interleave(lcus_k, NEG+1, 0)
-        his = torch.repeat_interleave(his, NEG+1, 0)
-        '''
-
-        user_k = lcus_k
-        pos_k = lcpi_k
-
-        pscore = self.scores(user_k, pos_k, his)
-        nscore = self.scores(user_k, neg_k, his)
-
-        # pscore, lpi = self.scores(lcus_k, lcpi_k, his)
-        # nscore, lni = self.scores(lcus_k, lcni_k, his)
-
+        pscore, lpi = self.scores(lcus, lcpi_f, feat_comp, his_f)
+        nscore, lni = self.scores(lcus, lcni_f, feat_comn, his_f)
         # score with binary codes
         '''
         bcus = self.sign(lcus)
@@ -365,9 +342,9 @@ class FashionNet(nn.Module):
             # only use second top item since to balance top category
             latents = torch.stack(lcpi[1:] + lcni[1:], dim=1)
         else:
-            latents = torch.stack(lcpi + lcni, dim=1)
+            latents = torch.cat([lpi, lni], dim=1)
         latents = latents.view(-1, self.param.dim)
-        return (pscore, nscore, pscore, nscore), latents
+        return (pscore, nscore, pscore, nscore), latents, dloss_o
 
     def semantic_output(self, lcus, pos_feat, neg_feat):
         scores, latents = self._pairwise_output(
@@ -380,11 +357,11 @@ class FashionNet(nn.Module):
         # extract visual features
         pos_feat = [self.features(x) for x in pos_img]
         neg_feat = [self.features(x) for x in neg_img]
-        scores, latents = self._pairwise_output(
+        scores, latents, dloss_o = self._pairwise_output(
             lcus, pos_feat, neg_feat, his_v, self.encoder_v
         )
         debugger.put("item.v", latents)
-        return scores, latents
+        return scores, latents, dloss_o
 
     def debug(self):
         LOGGER.debug("Scale value: %.3f", self.scale)
@@ -393,15 +370,18 @@ class FashionNet(nn.Module):
             debugger.log("item.v")
         if self.param.use_semantic:
             debugger.log("item.s")
-        #if isinstance(self.core, nn.ModuleList):
-            #for module in self.core:
-                #module.debug()
+        '''
+        if isinstance(self.core, nn.ModuleList):
+            for module in self.core:
+                module.debug()
+        '''
 
     def reg(self, s):
         #print(s.size())
+        n = s.size(0)
         g = s.matmul(s.transpose(1, 2))
         #print(g.size())
-        reg = g.diagonal(dim1=1, dim2=2).sum() - torch.logdet(g).sum()
+        reg = (g.diagonal(dim1=1, dim2=2).sum() - torch.logdet(g).sum()) / n
         return reg
 
     def forward(self, *inputs):
@@ -411,13 +391,14 @@ class FashionNet(nn.Module):
         #print(posi)
         one_hot = utils.one_hot(uidx, self.param.num_users)
         # score latent codes
-        lcus = self.user_embedding(one_hot).unsqueeze(1)
+        lcus_eb = self.user_embedding(one_hot).unsqueeze(1)
         #print(lcus_eb.size())
-        #lcus_k = self.disen_user(lcus_eb)
+        lcus_f, dloss_u = self.disen_user(lcus_eb)
+        #lcus_f = lcus_eb
         #print(lcus_k.size())
-        #lcus = torch.mean(lcus_k, dim=1)
+        #lcus = torch.mean(lcus_f, dim=1)
         #print(lcus.size())
-        debugger.put("user", lcus)
+        debugger.put("user", lcus_eb)
         loss = dict()
         accuracy = dict()
         if self.param.use_semantic and self.param.use_visual:
@@ -458,12 +439,11 @@ class FashionNet(nn.Module):
             his_v = []
             for out in user_his:
                 out_v = out
-                # print(out_v)
                 out_v_feat = [self.features(x) for x in out_v]
-                # print(out_v_feat)
-                out_v_latent = torch.stack(self.latent_code(out_v_feat, self.encoder_v), dim=1)  # B*3*dim
+                out_v_latent = torch.stack(self.latent_code(out_v_feat, self.encoder_v), dim=1)
                 his_v.append(out_v_latent)
-            scores, _ = self.visual_output(lcus, posi, nega, his_v)
+
+            scores, _, dloss_o = self.visual_output(lcus_f, posi, nega, his_v)
         elif self.param.use_semantic:
             scores, _ = self.semantic_output(lcus, posi, nega)
         else:
@@ -474,9 +454,8 @@ class FashionNet(nn.Module):
         #print('score_pos:', scores[0])
         #print('score_neg:', scores[1])
         binary_diff = scores[2] - scores[3]
-        reg = self.reg(self.S)
-        rank_loss = soft_margin_loss(diff) + reg*0.01
-        binary_loss = soft_margin_loss(binary_diff)
+        rank_loss = soft_margin_loss(diff) + dloss_o*0.005 + dloss_u*0.005
+        binary_loss = soft_margin_loss(diff)
         acc = torch.gt(diff.data, 0)
         binary_acc = torch.gt(binary_diff.data, 0)
         loss.update(rank_loss=rank_loss, binary_loss=binary_loss)
@@ -556,10 +535,23 @@ class FashionNetDeploy(FashionNet):
         lcpi = self.latent_code(feat, encoder)
         # score with relaxed features
         lcpi_s = torch.stack(lcpi, dim=1)
-        lcus_k, lcpi_k, neg_k, his = self.disen_user_outfit(lcus, lcpi_s, lcpi_s, his_v)
-        #cus_k, lcpi_k = self.disen_user_outfit(lcus, lcpi_s)
-        #lcpi_k, _ = self.disen_outfit(lcpi_s)
-        score = self.scores(lcus_k, lcpi_k, his)
+
+        his_f = torch.stack(his_v, dim=1)
+        his_f = torch.mean(his_f, dim=1)
+        '''
+        his_f = []
+        for out_v in his_v:
+            out_f, _, _ = self.disen_outfit(out_v)
+            his_f.append(out_f)
+        his_f = torch.stack(his_f, dim=1)
+        his_f = torch.mean(his_f, dim=1)
+
+        lcpi_f, feat_com, _ = self.disen_outfit(lcpi_s)
+        #print("lcus:", lcus)
+        #print("lcpi_k:", lcpi_k)
+        #assert(0==1)
+        '''
+        score, _ = self.scores(lcus, lcpi_s, lcpi_s, his_f)
         # score with binary codes
         #bcus = self.sign(lcus)
         #bcpi = [self.sign(h) for h in lcpi]
@@ -582,9 +574,9 @@ class FashionNetDeploy(FashionNet):
         items, user_his, uidx = inputs
         one_hot = utils.one_hot(uidx, self.param.num_users)
         # compute latent codes
-        lcus = self.user_embedding(one_hot).unsqueeze(1)
+        lcus_eb = self.user_embedding(one_hot).unsqueeze(1)
         # print(lcus_eb.size())
-        #lcus_k = self.disen_user(lcus_eb)
+        # lcus_f, _ = self.disen_user(lcus_eb)
         if self.param.use_semantic and self.param.use_visual:
 
             his_v = []
@@ -614,12 +606,11 @@ class FashionNetDeploy(FashionNet):
             his_v = []
             for out in user_his:
                 out_v = out
-                # print(out_v)
                 out_v_feat = [self.features(x) for x in out_v]
-                # print(out_v_feat)
-                out_v_latent = torch.stack(self.latent_code(out_v_feat, self.encoder_v), dim=1)  # B*3*dim
+                out_v_latent = torch.stack(self.latent_code(out_v_feat, self.encoder_v), dim=1)
                 his_v.append(out_v_latent)
-            score = self.visual_output(lcus, items, his_v)
+
+            score = self.visual_output(lcus_eb, items, his_v)
         elif self.param.use_semantic:
             score = self.semantic_output(lcus, items)
         else:

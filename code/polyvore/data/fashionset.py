@@ -189,7 +189,6 @@ class PolyvoreDataset(Dataset):
             lmdb_env=lmdb_env,
             transforms=transforms,
         )
-        self.user_his = np.array(pd.read_csv(param.u_pre_fn, header=None, usecols=[1,2,3], dtype=np.int)).reshape(-1,10,3)
         self.image_list = image_list
         # load tuples
         self.posi_tpl = np.array(pd.read_csv(param.posi_fn, dtype=np.int))
@@ -208,6 +207,13 @@ class PolyvoreDataset(Dataset):
         self.nega = self.nega_fix = self.nega_tpl[:, 1:]
         self.num_posi = len(self.posi)
         self.num_users = len(set(self.uidxs))
+        # load his
+        if self.num_users == 630:
+            self.user_his = np.array(pd.read_csv(param.u_pre_fn, header=None, usecols=[1, 2, 3], dtype=np.int)).reshape(
+                -1, 10, 3)
+        else:
+            self.user_his = np.array(pd.read_csv(param.u_pre_fn, header=None, usecols=[1, 2, 3, 4], dtype=np.int)).reshape(
+                -1, 10, 4)
         # id list and size for each category
         self.posi_set = set(map(tuple, self.posi))
         # number of positive outfits for each user

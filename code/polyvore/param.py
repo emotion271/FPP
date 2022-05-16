@@ -217,6 +217,7 @@ class DataParam(_Param):
         nega_mode="RandomOnline",  # mode for negative outfits
         data_root="data/polyvore",  # data root
         list_fmt="image_list_{}",
+        len_his="10",
         use_semantic=False,
         use_visual=True,
         image_root=None,  # image root if it's saved in another place
@@ -296,6 +297,11 @@ class DataParam(_Param):
         return "tuples_{}_nega"
 
     @property
+    def upre_fmt(self):
+        """Infer the file format for user his"""
+        return "user_his_cov_min_{}.csv"
+
+    @property
     def posi_fn(self):
         return os.path.join(self.data_dir, self.posi_fmt.format(self.phase))
 
@@ -305,7 +311,7 @@ class DataParam(_Param):
 
     @property
     def u_pre_fn(self):
-        return os.path.join(self.data_dir, "user_his_cov_min.csv")
+        return os.path.join(self.data_dir, self.upre_fmt.format(self.len_his))
 
     @property
     def hard(self):
@@ -336,6 +342,7 @@ class NetParam(_Param):
         hash_types=0,
         margin=None,
         debug=False,
+        num_seeds=4,
     )
 
     def setup(self):

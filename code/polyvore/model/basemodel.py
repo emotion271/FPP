@@ -165,7 +165,7 @@ class UserEncoder(LatentCode):
             nn.init.constant_(self.encoder[0].bias.data, 0.0)
             nn.init.normal_(self.encoder[-1].weight.data, std=0.01)
         else:
-            nn.init.normal_(self.encoder.weight.data, std=0.01)
+            nn.init.normal_(self.encoder.weight.data, std=1)
 
 
 class CoreMat(nn.Module):
@@ -246,222 +246,166 @@ class UserEb(nn.Module):
         return self.eb(x)
 
     def init_weights(self):
-        nn.init.normal_(self.eb.weight.data, std=1)
+        nn.init.normal_(self.eb.weight.data, std=0.01)
 
 
-class ConditionalSimNet(nn.Module):
-    def __init__(self):
-        super(ConditionalSimNet, self).__init__()
-        self.learned_mask = True
-        self.hidden_dim = 128
-        self.n_conditions = 5
-        self.prein = False
+class FactorBlock(nn.Module):
+    def __init__(self, param):
+        super(FactorBlock, self).__init__()
+        self.dim = param.dim
+        #self.num_heads = 4
+        #self.num_inds = 16
+        #self.num_seeds = 1
+        #self.ln = True
 
-        if self.learned_mask:
-            if self.prein:
-                self.masks = nn.Embedding(self.n_conditions, self.hidden_dim)
-                mask_array = np.zeros([self.n_conditions, self.hidden_dim])
-                mask_array.fill(0.1)
-                mask_len = int(self.hidden_dim / self.n_conditions)
-                for i in range(self.n_conditions):
-                    mask_array[i, i * mask_len:(i + 1) * mask_len] = 1
-
-                self.masks.weight = torch.nn.Parameter(torch.Tensor(mask_array), requires_grad=True)
-            else:
-                self.masks = torch.nn.Embedding(self.n_conditions, self.hidden_dim)
-                self.masks.weight.data.normal_(0.9, 0.7)
-        else:
-            self.masks = torch.nn.Embedding(self.n_conditions, self.hidden_dim)
-            mask_array = np.zeros([self.n_conditions, self.hidden_dim])
-            mask_len = int(128 / self.n_conditions)
-            for i in range(self.n_conditions):
-                mask_array[i, i * mask_len:(i + 1) * mask_len] = 1
-            self.masks.weight = torch.nn.Parameter(torch.Tensor(mask_array), requires_grad=False)
-        self.max_num = 3
-        self.alpha = 0.2
-        self.attention = nn.Sequential(
-            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
-            nn.Tanh(),
-            nn.Linear(self.hidden_dim, self.n_conditions),
-            # nn.Linear(self.hidden_dim * 2, self.n_conditions),
-            nn.Softmax(dim=-1)
-        )
-
-        self.ego = nn.Sequential(
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.LeakyReLU(),
-        )
-
-        self.mess = nn.Sequential(
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-            nn.LeakyReLU(),
-        )
+        self.trans_w = nn.Linear(param.dim, param.dim, bias=False)
         '''
-        self.score = nn.Sequential(
-
-            nn.Linear(self.hidden_dim, self.hidden_dim // 2, bias=False),
-            nn.LeakyReLU(),
-            nn.Linear(self.hidden_dim // 2, 1, bias=False),
-            nn.Sigmoid()
-
+        self.enc = nn.Sequential(
+            A.ISAB(self.dim, self.dim, self.num_heads, self.num_inds, ln=self.ln),
+            A.ISAB(self.dim, self.dim, self.num_heads, self.num_inds, ln=self.ln),
         )
+        self.pma = A.PMA(self.dim, self.num_heads, self.num_seeds, ln=self.ln)
+        self.sab = nn.Identity()
         '''
-        self.apply(init_weight)
 
-    def _get_outfit_graph_feat(self, img_embedding, masked_embedding):
-
-        atten_input = self._prepare_attentional_mechanism_input(img_embedding)
-
-        e = self.attention(atten_input).contiguous().view(-1, self.max_num * self.max_num, self.n_conditions).unsqueeze(
-            3)
-        attention = e
-        e = e.repeat(1, 1, 1, self.hidden_dim)
-
-        ones = torch.ones(3, 3).cuda(0)
-        ones_diag = torch.diag(torch.ones(3)).cuda(0)
-        adj = ones - ones_diag
-        masked_embedding_in_chunks = masked_embedding.repeat_interleave(self.max_num, dim=1)
-
-        masked_embedding_alternating = masked_embedding.repeat(1, self.max_num, 1, 1)
-        relation = masked_embedding_in_chunks * masked_embedding_alternating  ## [batch, max_num*max_num, n_condition, dim]
-        # relation = masked_embedding_alternating ## [batch, max_num*max_num, n_condition, dim]
-        relation = relation * e
-
-        relation = torch.sum(relation, dim=2)
-        adj = adj.view(-1, self.max_num * self.max_num, 1).repeat(1, 1, self.hidden_dim)
-        relation = relation * adj
-        relation = relation.view(-1, self.max_num, self.max_num, self.hidden_dim)
-        relation = torch.sum(relation, dim=2)
-        #seq_len = seq_len.repeat_interleave(self.hidden_dim * self.max_num, dim=0).view(-1, self.max_num, self.hidden_dim)
-
-        relation = torch.div(relation, 3.0)
-        com_mess = self.mess(relation)
-        ego_mess = self.ego(img_embedding)
-
-        new_code = (ego_mess + com_mess).view(-1, self.max_num, self.hidden_dim)
-        #new_code = new_code * mask
-
-        return new_code
-
-    def _prepare_attentional_mechanism_input(self, Wh):
-
-        Wh_repeated_in_chunks = Wh.repeat_interleave(self.max_num, dim=1)
-        Wh_repeated_alternating = Wh.repeat(1, self.max_num, 1)
-
-        all_combinations_matrix = torch.cat([Wh_repeated_in_chunks, Wh_repeated_alternating], dim=2)
-        return all_combinations_matrix.view(-1, self.max_num, self.max_num, 2 * self.hidden_dim)
-
-    def _compatibility_score(self, ilatents, mask):  # [b,4,dim]
-        # ilatents:[batch, max_num, 4096]#512
-        b = ilatents.size()[0]
-        m = ilatents.size()[1]
-        d = ilatents.size()[2]
-
-        iscore = self.score(ilatents)  # [b,4,8]
-
-        y = torch.sum(iscore, dim=2)  # [b,4]
-        # score = torch.mean(y, dim=1)
-        score = torch.sum(y * mask, dim=1)
-        # score = torch.div(y)
-        return score
-
-    def forward(self, input):
-
-        #print('input:', input)
-        features = F.normalize(input, p=2, dim=-1)
-        #img_embedding = features * mask_512  # as input and comparison [batch, max_num, 512]
-        img_embedding = features
-        masked_embedding = img_embedding.unsqueeze(2).repeat(1, 1, self.n_conditions, 1)
-        mask_weight = F.relu(self.masks.weight)
-        mask_weigh_norm = mask_weight.norm(1) / self.n_conditions * 0.0005
-        mask_weight = mask_weight.contiguous().view(-1, 1, self.n_conditions, self.hidden_dim)
-        masked_embedding = masked_embedding * mask_weight
-        #print('mask_embedding:', mask_weight)
-        code = self._get_outfit_graph_feat(img_embedding, masked_embedding)
-        #score = self._compatibility_score(I, mask)
-        #score = torch.div(score, seq_len)
-        return code, mask_weigh_norm
-
-    def init_weights(self):
-        pass
+    def forward(self, X):
+        item_f = self.trans_w(X)
+        #item_f_enc = self.enc(item_f)
+        #out_f = item_f_enc.mean(axis=1)
+        #out_f = self.sab(self.pma(item_f_enc)).squeeze(1)
+        #print(out_f.size())
+        #assert (0)
+        return item_f
 
 
 class UserDisen(nn.Module):
-    def __init__(self, param, s):
+    def __init__(self, param, ln=False):
         super(UserDisen, self).__init__()
+        self.dim = param.dim
         self.num_heads = 4
-        self.num_seeds = 5
+        self.num_seeds = param.num_seeds
         self.ln = False
-        self.S = s
-        self.eb = nn.Sequential(
-            A.NPMA(param.dim, self.num_heads, self.num_seeds, self.S, ln=self.ln),
-            A.SAB(param.dim, param.dim, self.num_heads, ln=self.ln),
-        )
+        self.branches = self._make_branch(self.num_seeds, param)
+
+    @staticmethod
+    def _make_branch(num_seeds, param):
+        branches = nn.ModuleList()
+        for branch in range(num_seeds):
+            branches.append(FactorBlock(param))
+        return branches
 
     def forward(self, X):
-        return self.eb(X)
+        user_f = []
+        for branch in self.branches:
+            user = branch(X)
+            user_f.append(user)
+
+        x = torch.cat(user_f, dim=1)
+        #print(x.size())
+        mat_feats = F.normalize(x, p=2, dim=-1)
+        diversity_mat = torch.bmm(mat_feats, mat_feats.transpose(1, 2))
+        eye_mat = torch.eye(diversity_mat.size(-1)).unsqueeze(0).repeat(diversity_mat.size(0), 1, 1).to(
+            diversity_mat.device)
+        diversity_loss = torch.pow(eye_mat - diversity_mat, exponent=2).view(
+            -1, self.num_seeds*self.num_seeds).sum(dim=-1, keepdim=True)
+        #print("diversity:", diversity_loss.size())
+
+        return x, diversity_loss
 
     def init_weights(self):
         pass
 
 
 class OutfitDisen(nn.Module):
-    def __init__(self, param, s):
+    def __init__(self, param):
         super(OutfitDisen, self).__init__()
+        self.num_seeds = param.num_seeds
+        self.branches = self._make_branch(self.num_seeds, param)
         self.dim = param.dim
         self.num_heads = 4
         self.num_inds = 16
-        self.num_seeds = 5
-        self.ln = False
-        #self.S = nn.Parameter(torch.Tensor(1, self.num_seeds, self.dim))
-        #nn.init.normal_(self.S)
-        self.S = s
+        self.seedvec = 1
+        self.ln = True
+
         self.enc = nn.Sequential(
             A.ISAB(self.dim, self.dim, self.num_heads, self.num_inds, ln=self.ln),
             A.ISAB(self.dim, self.dim, self.num_heads, self.num_inds, ln=self.ln),
         )
-        self.dec = nn.Sequential(
-            A.NPMA(self.dim, self.num_heads, self.num_seeds, self.S, ln=self.ln),
-            A.SAB(self.dim, self.dim, self.num_heads, ln=self.ln),
-        )
+        self.pma = A.PMA(self.dim, self.num_heads, self.seedvec, ln=self.ln)
+        self.sab = nn.Identity()
+
+    @staticmethod
+    def _make_branch(num_seeds, param):
+        branches = nn.ModuleList()
+        for branch in range(num_seeds):
+            branches.append(FactorBlock(param))
+        return branches
 
     def forward(self, X):
-        return self.dec(self.enc(X))
+        item_f, out_f = [], []
+        for branch in self.branches:
+            item = branch(X)
+            item_f.append(item)
+
+        mat_feats = F.normalize(torch.stack(item_f, dim=2), p=2, dim=-1)
+        diversity_mat = torch.matmul(mat_feats, mat_feats.transpose(2, 3))
+        eye_mat = torch.eye(diversity_mat.size(-1)).unsqueeze(0).unsqueeze(0).repeat(
+            diversity_mat.size(0),diversity_mat.size(1),1,1).to(diversity_mat.device)
+        diversity_loss = torch.pow(eye_mat-diversity_mat, exponent=2).view(
+            -1, eye_mat.size(1)*self.num_seeds*self.num_seeds).sum(dim=-1, keepdim=True)
+
+        for item in item_f:
+            out = self.sab(self.pma(self.enc(item))).squeeze(1)
+            out_f.append(out)
+
+        x = torch.stack(out_f, dim=1)
+
+        #item_feat = F.normalize(torch.stack(item_f, dim=1), p=2, dim=-1)
+
+        item_feat = torch.stack(item_f, dim=1)
+
+        size = item_feat.size(2)
+        indx, indy = np.triu_indices(size, k=1)
+
+        if size == 4:
+            indx = indx[1:]
+            indy = indy[1:]
+
+        feat_com = item_feat[:,:,indx] * item_feat[:,:,indy]
+
+        return x, feat_com, diversity_loss
 
     def init_weights(self):
         pass
 
-
-class UserOutfitDisen(nn.Module):
-    def __init__(self, param, s):
-        super(UserOutfitDisen, self).__init__()
-        self.userdisen = UserDisen(param, s)
-        self.outfitdisen = OutfitDisen(param, s)
-
-    def forward(self, lcus, out_p, out_n, his_v):
-        lcus_k = self.userdisen(lcus)
-        out_pk = self.outfitdisen(out_p)
-        out_nk = self.outfitdisen(out_n)
-        his_vk = [self.outfitdisen(out_v) for out_v in his_v]
-        his_k = torch.stack(his_vk, dim=1)
-        his = torch.mean(his_k, dim=1)
-        return lcus_k, out_pk, out_nk, his
-
-    def init_weights(self):
-        pass
-
-
+'''
 class Match(nn.Module):
     def __init__(self, param):
         super(Match, self).__init__()
         self.dim = param.dim
-        self.num_heads = 4
-        self.ln = False
-        self.eb = A.MAB(self.dim, self.dim, self.dim, self.num_heads, ln=self.ln)
+        num_heads = 4
+        self.att1 = A.MATT(self.dim, self.dim, self.dim, num_heads)
+        self.att2 = A.MATT(self.dim, self.dim, self.dim, num_heads)
+        self.att3 = A.MATT(self.dim, self.dim, self.dim, num_heads)
 
-    def forward(self, X, Y):
-        return self.eb(X, Y)
+    def forward(self, out, user, his_v):
+        user = user.contiguous().view(-1, user.size(1), 128)
+        out = out.contiguous().view(-1, out.size(1), 128)
+        out_f = self.att1(user, out)
+        #print(out)
+        #print(user)
+        his_f = self.att2(user, his_v)
+        out_user = out_f * user
+        his_user = his_f * user
+        x = self.att3(his_user, out_user)
+        #print(user.size())
+        #print(out.size())
+        #print(out_f.size())
+        #print(his_f.size())
+        #print(x.size())
+        #assert (0)
+        return x
 
     def init_weights(self):
         pass
-
+'''
