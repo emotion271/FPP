@@ -92,8 +92,10 @@ class FashionNet(nn.Module):
         self.scale = 1.0
         # user embedding layer
         self.user_embedding = M.UserEncoder(param)
-        self.disen_user = M.UserDisen(param)
-        self.disen_outfit = M.OutfitDisen(param)
+
+        # self.disen_user = M.UserDisen(param)
+        # self.disen_outfit = M.OutfitDisen(param)
+
         # feature extractor
         if self.param.use_visual:
             self.features = NAMED_MODELS[param.backbone](tailed=True)
@@ -233,7 +235,7 @@ class FashionNet(nn.Module):
         """For simplicity, we remove top-top pair on variable-length outfit and
            use duplicated top when necessary.
         """
-        '''
+
         size = ilatents.size(1)
         # print(size)
         indx, indy = np.triu_indices(size, k=1)
@@ -242,13 +244,13 @@ class FashionNet(nn.Module):
             # remove top-top comparison
             indx = indx[1:]
             indy = indy[1:]
-        '''
+
         # # N x size x D
         # x = self.match(ilatents, ulatent, his_v)
         x = ilatents * ulatent
         x_his = ilatents * his_v
         # N x Comb x D
-        # y = ifeat[:, indx] * ifeat[:, indy]
+        y = ifeat[:, indx] * ifeat[:, indy]
         # shape [N]
         #score_mlp = self.match(latents, ulatent)
         #y = ifeat[:, indx] * ifeat[:, indy]
@@ -261,7 +263,7 @@ class FashionNet(nn.Module):
             #score_mlp = self.match(ilatents, ulatent)
             score_u = self.core[0](x).mean(dim=(1, 2))
             score_his = self.core[0](x_his).mean(dim=(1, 2))
-            score_i = self.core[1](ifeat).mean(dim=(1, 2, 3))
+            score_i = self.core[1](y).mean(dim=(1, 2))
         elif self.param.hash_types == polyvore.param.WEIGHTED_HASH_U:
             #score_u = self.core(x).mean(dim=(1, 2))
             #score_i = y.mean(dim=(1, 2))
@@ -322,11 +324,15 @@ class FashionNet(nn.Module):
 
         his_f = torch.stack(his_v, dim=1)
         his_f = torch.mean(his_f, dim=1)
-        lcpi_f, feat_comp, dloss_o = self.disen_outfit(lcpi_s)
-        lcni_f, feat_comn, _ = self.disen_outfit(lcni_s)
+        # lcpi_f, feat_comp, dloss_o = self.disen_outfit(lcpi_s)
+        # lcni_f, feat_comn, _ = self.disen_outfit(lcni_s)
 
-        pscore, lpi = self.scores(lcus, lcpi_f, feat_comp, his_f)
-        nscore, lni = self.scores(lcus, lcni_f, feat_comn, his_f)
+        # pscore, lpi = self.scores(lcus, lcpi_f, feat_comp, his_f)
+        # nscore, lni = self.scores(lcus, lcni_f, feat_comn, his_f)
+
+        pscore, lpi = self.scores(lcus, lcpi_s, lcpi_s, his_f)
+        nscore, lni = self.scores(lcus, lcni_s, lcni_s, his_f)
+
         # score with binary codes
         '''
         bcus = self.sign(lcus)
@@ -344,7 +350,7 @@ class FashionNet(nn.Module):
         else:
             latents = torch.cat([lpi, lni], dim=1)
         latents = latents.view(-1, self.param.dim)
-        return (pscore, nscore, pscore, nscore), latents, dloss_o
+        return (pscore, nscore, pscore, nscore), latents
 
     def semantic_output(self, lcus, pos_feat, neg_feat):
         scores, latents = self._pairwise_output(
@@ -357,11 +363,11 @@ class FashionNet(nn.Module):
         # extract visual features
         pos_feat = [self.features(x) for x in pos_img]
         neg_feat = [self.features(x) for x in neg_img]
-        scores, latents, dloss_o = self._pairwise_output(
+        scores, latents = self._pairwise_output(
             lcus, pos_feat, neg_feat, his_v, self.encoder_v
         )
         debugger.put("item.v", latents)
-        return scores, latents, dloss_o
+        return scores, latents
 
     def debug(self):
         LOGGER.debug("Scale value: %.3f", self.scale)
@@ -388,16 +394,14 @@ class FashionNet(nn.Module):
         """Forward according to setting."""
         # pair-wise output
         posi, nega, user_his, uidx = inputs
-        #print(posi)
+
         one_hot = utils.one_hot(uidx, self.param.num_users)
+
         # score latent codes
         lcus_eb = self.user_embedding(one_hot).unsqueeze(1)
-        #print(lcus_eb.size())
-        lcus_f, dloss_u = self.disen_user(lcus_eb)
-        #lcus_f = lcus_eb
-        #print(lcus_k.size())
-        #lcus = torch.mean(lcus_f, dim=1)
-        #print(lcus.size())
+        # lcus_f, dloss_u = self.disen_user(lcus_eb)
+        lcus_f = lcus_eb
+
         debugger.put("user", lcus_eb)
         loss = dict()
         accuracy = dict()
@@ -443,7 +447,7 @@ class FashionNet(nn.Module):
                 out_v_latent = torch.stack(self.latent_code(out_v_feat, self.encoder_v), dim=1)
                 his_v.append(out_v_latent)
 
-            scores, _, dloss_o = self.visual_output(lcus_f, posi, nega, his_v)
+            scores, _ = self.visual_output(lcus_f, posi, nega, his_v)
         elif self.param.use_semantic:
             scores, _ = self.semantic_output(lcus, posi, nega)
         else:
@@ -454,7 +458,7 @@ class FashionNet(nn.Module):
         #print('score_pos:', scores[0])
         #print('score_neg:', scores[1])
         binary_diff = scores[2] - scores[3]
-        rank_loss = soft_margin_loss(diff) + dloss_o*0.005 + dloss_u*0.005
+        rank_loss = soft_margin_loss(diff)
         binary_loss = soft_margin_loss(diff)
         acc = torch.gt(diff.data, 0)
         binary_acc = torch.gt(binary_diff.data, 0)

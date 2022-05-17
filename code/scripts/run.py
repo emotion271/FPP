@@ -159,6 +159,8 @@ def evalute_rank(config):
     loader.set_data_mode("NegaOnly")
     nega_score, nega_binary = outfit_scores()
     LOGGER.info("Compute scores for negative outfits, done!")
+    # save score
+    # path = './'
     # compute ndcg
     mean_ndcg, avg_ndcg = utils.metrics.NDCG(posi_score, nega_score)
     mean_ndcg_binary, avg_ndcg_binary = utils.metrics.NDCG(posi_binary, nega_binary)

@@ -40,11 +40,12 @@ solver_param:
   gamma: 1.0 # gamma for scale-tanh
   gpus: [3]
   visdom_env: fashion_hash_net
-  visdom_title: FIN519_test
-  checkpoints: ./checkpoints/FIN519_test
+  visdom_title: FIN519_his20
+  checkpoints: ./checkpoints/FIN519_his20
   optim_param:
     name: SGD
-    lr: [5, 0.01, 0.01, 0.001, 0.005, 0.01] # learning rate for each group
+    lr: [5, 0.001, 0.005, 0.01]
+    # lr: [5, 0.01, 0.01, 0.001, 0.005, 0.01] # learning rate for each group, if use factorization
     weight_decay: 1.0e-06
     grad_param: { momentum: 0.9 } # setting for SGD
     lr_scheduler: ReduceLROnPlateau
@@ -52,5 +53,5 @@ solver_param:
       { cooldown: 10, factor: 0.5, patience: 10, threshold: 0.05 }
 
 #resume: checkpoints/FIN519_his_latest.solver
-log_file: logs/train/FIN519_test.log
+log_file: logs/train/FIN519_his20.log
 log_level: DEBUG

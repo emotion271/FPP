@@ -1,11 +1,11 @@
 data_param:
-  batch_size: 96 # batch size
+  batch_size: 4 # batch size
   data_root: ../FHN/data/polyvore # data root
   image_root: ../FHN/data/polyvore # image root
   data_set: tuples_630 # data set
-  len_his: 10 # size of user his behaviour
+  len_his: 20 # size of user his behaviour
   nega_mode: RandomOnline # negative outfits strategy
-  num_workers: 6 # number of workers
+  num_workers: 2 # number of workers
   use_lmdb: true # use lmbd data
   use_semantic: false # use sentance data
   use_visual: true # use visual data
@@ -27,9 +27,9 @@ net_param:
   backbone: alexnet # backbone for feature extractor
   hash_types: 3 # type of hash codes
   scale_tanh: false # use scale tahn
-  without_binary: true # use bianry module
+  without_binary: true # use binary module
   use_semantic: false # use semantic features
-  use_visual: true # user visdual features
+  use_visual: true # user visual features
   margin: 0.1 # margin for vse-loss, if exists
   num_seeds: 4 # num of factorization
 
@@ -38,16 +38,15 @@ solver_param:
   display: 20 # display interval
   epochs: 150 # total epoches
   gamma: 1.0 # gamma for scale-tanh
-  gpus: [0,1,2]
+  gpus: [3]
   visdom_env: fashion_hash_net
-  visdom_title: fin_itemf_fpm2
-  checkpoints: ./checkpoints/fin_itemf_fpm2
+  visdom_title: fin630_his20
+  checkpoints: ./checkpoints/fin630_his20
   optim_param:
     name: SGD
     # lr: [5, 0.001, 0.005, 0.005, 0.01] # learning rate for each group
-    # lr: [10, 10, 0.001, 0.01, 0.01, 0.1]
-    lr: [10, 0.01, 0.01, 0.001, 0.01, 0.01, 0.01]
-    #lr: [0.1, 0.01, 0.01, 0.001, 0.01, 0.01]
+    lr: [10, 0.001, 0.01, 0.01]
+    # lr: [10, 0.01, 0.01, 0.001, 0.01, 0.01, 0.01] # learning rate for each group, if use factorization
     weight_decay: 1.0e-06
     grad_param: { momentum: 0.9 } # setting for SGD
     lr_scheduler: ReduceLROnPlateau
@@ -56,5 +55,5 @@ solver_param:
 
 # load_trained: checkpoints/fashion_hash_net_vse_t3_u630_latest.pth
 # resume: checkpoints/fin_itemf_fpm2_latest.solver
-log_file: logs/train/fin_itemf_fpm3.log
+log_file: logs/train/fin630_his20.log
 log_level: DEBUG
